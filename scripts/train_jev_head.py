@@ -157,12 +157,21 @@ def main():
         ]
         if not val_samples:
             raise RuntimeError("Validation feature cache contains no samples with gt_pages")
-        train_ids = {s["id"] for s in train_samples}
-        val_ids = {s["id"] for s in val_samples}
-        overlap = train_ids & val_ids
+        # Apple's prepare_data.py numbers IDs from zero independently for each
+        # split, so train/validation IDs can collide even when samples differ.
+        # Detect actual leakage by normalized question text instead.
+        train_questions = {
+            " ".join(s["question"].lower().split())
+            for s in train_samples
+        }
+        val_questions = {
+            " ".join(s["question"].lower().split())
+            for s in val_samples
+        }
+        overlap = train_questions & val_questions
         if overlap:
             raise RuntimeError(
-                f"Train/validation ID overlap detected ({len(overlap)} samples)"
+                f"Train/validation question overlap detected ({len(overlap)} samples)"
             )
         print(
             f"Using external held-out validation cache: {args.val_features}"
