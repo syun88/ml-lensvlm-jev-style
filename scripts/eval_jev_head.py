@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import time
 import os
 import sys
 
@@ -79,6 +80,7 @@ def main():
 
     total = 0
     top1_hits = 0
+    head_times = []
     recall1_sum = 0.0
     recall3_sum = 0.0
     brier_sum = 0.0
@@ -94,7 +96,26 @@ def main():
             mask = mask.to(device)
             positive = positive.to(device)
 
+            if device == "mps":
+                try:
+                    torch.mps.synchronize()
+                except Exception:
+                    pass
+            elif device == "cuda":
+                torch.cuda.synchronize()
+
+            t0 = time.perf_counter()
             out = model(q, pages, mask)
+
+            if device == "mps":
+                try:
+                    torch.mps.synchronize()
+                except Exception:
+                    pass
+            elif device == "cuda":
+                torch.cuda.synchronize()
+
+            head_times.append(time.perf_counter() - t0)
 
             for i in range(batch_n):
                 sample = samples[offset + i]
@@ -144,6 +165,11 @@ def main():
     print(f"Evidence recall@1: {recall1_sum / max(1,total):.3%}")
     print(f"Evidence recall@3: {recall3_sum / max(1,total):.3%}")
     print(f"Noul Brier score: {brier_sum / max(1,brier_count):.6f}")
+    if head_times:
+        total_head = sum(head_times)
+        print(f"Decision-head total time: {total_head:.6f} sec")
+        print(f"Decision-head mean batch time: {total_head / len(head_times):.6f} sec")
+        print(f"Decision-head mean per sample: {total_head / max(1,total):.6f} sec")
     print(
         "Learned temperature:",
         f"{float(model.temperature.detach().cpu()):.4f}",
