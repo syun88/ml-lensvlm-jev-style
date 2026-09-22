@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 import time
 from pathlib import Path
 
@@ -26,7 +27,7 @@ import torch
 from PIL import Image
 from transformers import AutoModelForMultimodalLM, AutoProcessor
 
-from lensvlm.jev_style import extract_page_features, extract_question_feature
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))\n\nfrom lensvlm.jev_style import extract_page_features, extract_question_feature
 
 
 def _resolve_device(name: str) -> str:
