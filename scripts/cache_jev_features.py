@@ -27,7 +27,9 @@ import torch
 from PIL import Image
 from transformers import AutoModelForMultimodalLM, AutoProcessor
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))\n\nfrom lensvlm.jev_style import extract_page_features, extract_question_feature
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+
+from lensvlm.jev_style import extract_page_features, extract_question_feature
 
 
 def _resolve_device(name: str) -> str:
