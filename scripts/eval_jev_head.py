@@ -48,6 +48,12 @@ def main():
     parser.add_argument("--device", default="auto")
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--show", type=int, default=10)
+    parser.add_argument(
+        "--timing_repeats",
+        type=int,
+        default=20,
+        help="Repeated warmed-up timing runs on the first batch",
+    )
     args = parser.parse_args()
 
     device = _resolve_device(args.device)
@@ -81,6 +87,7 @@ def main():
     total = 0
     top1_hits = 0
     head_times = []
+    warmed_timing = None
     recall1_sum = 0.0
     recall3_sum = 0.0
     brier_sum = 0.0
@@ -95,6 +102,31 @@ def main():
             pages = pages.to(device)
             mask = mask.to(device)
             positive = positive.to(device)
+
+            # First untimed call warms up MPS/CUDA kernels so the published
+            # steady-state number is not dominated by one-time compilation.
+            if warmed_timing is None:
+                _ = model(q, pages, mask)
+                if device == "mps":
+                    try:
+                        torch.mps.synchronize()
+                    except Exception:
+                        pass
+                elif device == "cuda":
+                    torch.cuda.synchronize()
+
+                repeats = max(1, args.timing_repeats)
+                t0 = time.perf_counter()
+                for _ in range(repeats):
+                    _ = model(q, pages, mask)
+                if device == "mps":
+                    try:
+                        torch.mps.synchronize()
+                    except Exception:
+                        pass
+                elif device == "cuda":
+                    torch.cuda.synchronize()
+                warmed_timing = (time.perf_counter() - t0) / repeats
 
             if device == "mps":
                 try:
@@ -170,6 +202,8 @@ def main():
         print(f"Decision-head total time: {total_head:.6f} sec")
         print(f"Decision-head mean batch time: {total_head / len(head_times):.6f} sec")
         print(f"Decision-head mean per sample: {total_head / max(1,total):.6f} sec")
+        if warmed_timing is not None:
+            print(f"Decision-head warmed batch time: {warmed_timing:.6f} sec")
     print(
         "Learned temperature:",
         f"{float(model.temperature.detach().cpu()):.4f}",
