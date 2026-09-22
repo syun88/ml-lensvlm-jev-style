@@ -23,7 +23,9 @@ from pathlib import Path
 import torch
 from torch.utils.data import DataLoader, Dataset
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))\n\nfrom lensvlm.jev_style import JevStyleDecisionHead, pad_feature_batch
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+
+from lensvlm.jev_style import JevStyleDecisionHead, pad_feature_batch
 
 
 class FeatureDataset(Dataset):
