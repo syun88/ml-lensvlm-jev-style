@@ -15,13 +15,15 @@ Example:
 from __future__ import annotations
 
 import argparse
+import os
+import sys
 import random
 from pathlib import Path
 
 import torch
 from torch.utils.data import DataLoader, Dataset
 
-from lensvlm.jev_style import JevStyleDecisionHead, pad_feature_batch
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))\n\nfrom lensvlm.jev_style import JevStyleDecisionHead, pad_feature_batch
 
 
 class FeatureDataset(Dataset):
