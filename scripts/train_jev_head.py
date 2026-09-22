@@ -116,7 +116,8 @@ def evaluate(model, loader, device):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--features", required=True)
+    parser.add_argument("--features", required=True, help="Training feature cache")
+    parser.add_argument("--val_features", default=None, help="Optional held-out validation feature cache")
     parser.add_argument("--output", required=True)
     parser.add_argument("--device", default="auto")
     parser.add_argument("--epochs", type=int, default=40)
@@ -141,19 +142,42 @@ def main():
     ]
 
     if not samples:
-        raise RuntimeError("Feature cache contains no samples with gt_pages")
+        raise RuntimeError("Training feature cache contains no samples with gt_pages")
 
-    random.shuffle(samples)
-
-    if len(samples) == 1:
+    if args.val_features:
+        val_payload = torch.load(
+            args.val_features,
+            map_location="cpu",
+            weights_only=False,
+        )
         train_samples = samples
-        val_samples = samples
-        print("WARNING: one-sample smoke training; train and val are identical.")
+        val_samples = [
+            s for s in val_payload["samples"]
+            if s.get("gt_pages") and s["page_features"].shape[0] > 0
+        ]
+        if not val_samples:
+            raise RuntimeError("Validation feature cache contains no samples with gt_pages")
+        train_ids = {s["id"] for s in train_samples}
+        val_ids = {s["id"] for s in val_samples}
+        overlap = train_ids & val_ids
+        if overlap:
+            raise RuntimeError(
+                f"Train/validation ID overlap detected ({len(overlap)} samples)"
+            )
+        print(
+            f"Using external held-out validation cache: {args.val_features}"
+        )
     else:
-        n_val = max(1, int(round(len(samples) * args.val_ratio)))
-        n_val = min(n_val, len(samples) - 1)
-        val_samples = samples[:n_val]
-        train_samples = samples[n_val:]
+        random.shuffle(samples)
+        if len(samples) == 1:
+            train_samples = samples
+            val_samples = samples
+            print("WARNING: one-sample smoke training; train and val are identical.")
+        else:
+            n_val = max(1, int(round(len(samples) * args.val_ratio)))
+            n_val = min(n_val, len(samples) - 1)
+            val_samples = samples[:n_val]
+            train_samples = samples[n_val:]
 
     q_dim = int(train_samples[0]["question_feature"].numel())
     p_dim = int(train_samples[0]["page_features"].shape[-1])
@@ -222,10 +246,14 @@ def main():
         metrics = evaluate(model, val_loader, device)
         avg_loss = epoch_loss / max(1, steps)
 
-        # Prioritize actual first-page routing, use recall@3 as tiebreak signal.
-        score = metrics["top1_hit"] + 0.05 * metrics["recall@3"]
+        # Prioritize routing accuracy, then multi-page recall, then calibration.
+        score = (
+            metrics["top1_hit"]
+            + 0.05 * metrics["recall@3"]
+            - 0.01 * metrics["brier"]
+        )
 
-        if score >= best_score:
+        if score > best_score:
             best_score = score
             best_payload = {
                 "format": "jev_style_head_v1",
@@ -235,6 +263,11 @@ def main():
                     for k, v in model.state_dict().items()
                 },
                 "source_features": str(Path(args.features).resolve()),
+                "validation_features": (
+                    str(Path(args.val_features).resolve())
+                    if args.val_features
+                    else None
+                ),
                 "source_model": payload.get("model"),
                 "feature_pool": payload.get("feature_pool"),
                 "epoch": epoch,
