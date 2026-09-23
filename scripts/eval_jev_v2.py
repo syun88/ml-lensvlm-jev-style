@@ -92,7 +92,14 @@ def main():
     total = 0
     top1_hits = 0
     recall1 = 0.0
+    recall2 = 0.0
     recall3 = 0.0
+    recall5 = 0.0
+    all1 = 0
+    all2 = 0
+    all3 = 0
+    all5 = 0
+    mrr_sum = 0.0
     brier_sum = 0.0
     brier_count = 0
     shown = 0
@@ -137,12 +144,31 @@ def main():
                 pred_idx = int(probs.argmax().item())
                 pred_page = pred_idx + 1
                 hit = bool(gt[pred_idx].item())
-                topk3 = torch.topk(probs, min(3, valid_n)).indices
+                ranked = torch.argsort(probs, descending=True)
+                k1_idx = ranked[: min(1, valid_n)]
+                k2_idx = ranked[: min(2, valid_n)]
+                k3_idx = ranked[: min(3, valid_n)]
+                k5_idx = ranked[: min(5, valid_n)]
+
+                found1 = int(gt[k1_idx].sum().item())
+                found2 = int(gt[k2_idx].sum().item())
+                found3 = int(gt[k3_idx].sum().item())
+                found5 = int(gt[k5_idx].sum().item())
 
                 total += 1
                 top1_hits += int(hit)
-                recall1 += float(gt[pred_idx].item()) / n_gt
-                recall3 += float(gt[topk3].sum().item()) / n_gt
+                recall1 += found1 / n_gt
+                recall2 += found2 / n_gt
+                recall3 += found3 / n_gt
+                recall5 += found5 / n_gt
+                all1 += int(found1 == n_gt)
+                all2 += int(found2 == n_gt)
+                all3 += int(found3 == n_gt)
+                all5 += int(found5 == n_gt)
+
+                gt_positions = torch.nonzero(gt[ranked], as_tuple=False)
+                if gt_positions.numel() > 0:
+                    mrr_sum += 1.0 / (int(gt_positions[0].item()) + 1)
 
                 if shown < args.show:
                     top5 = torch.topk(probs, min(5, valid_n))
@@ -171,7 +197,14 @@ def main():
     print("Samples:", total)
     print(f"Top-1 evidence hit: {top1_hits / max(1,total):.3%}")
     print(f"Evidence recall@1: {recall1 / max(1,total):.3%}")
+    print(f"Evidence recall@2: {recall2 / max(1,total):.3%}")
     print(f"Evidence recall@3: {recall3 / max(1,total):.3%}")
+    print(f"Evidence recall@5: {recall5 / max(1,total):.3%}")
+    print(f"All-evidence@1: {all1 / max(1,total):.3%}")
+    print(f"All-evidence@2: {all2 / max(1,total):.3%}")
+    print(f"All-evidence@3: {all3 / max(1,total):.3%}")
+    print(f"All-evidence@5: {all5 / max(1,total):.3%}")
+    print(f"MRR (first evidence): {mrr_sum / max(1,total):.4f}")
     print(f"Noul Brier score: {brier_sum / max(1,brier_count):.6f}")
     print(f"Decision-head total time: {head_total:.6f} sec")
     print(f"Decision-head mean per sample: {head_total / max(1,total):.6f} sec")
