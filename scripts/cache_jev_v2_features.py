@@ -99,6 +99,39 @@ def infer_merge_size(grid_h: int, grid_w: int, n_tokens: int) -> int:
     )
 
 
+_POOL_WEIGHT_CACHE: dict[tuple, torch.Tensor] = {}
+
+
+def _adaptive_axis_weights(
+    in_size: int,
+    out_size: int,
+    device: torch.device,
+    dtype: torch.dtype,
+) -> torch.Tensor:
+    """Return exact adaptive-average pooling weights for one spatial axis.
+
+    PyTorch MPS currently rejects adaptive_avg_pool2d when input dimensions are
+    not divisible by output dimensions (e.g. 9 -> 6). Adaptive average pooling
+    is separable, so we can express it exactly as two tiny matrix multiplies and
+    keep all visual features on MPS.
+    """
+    key = (in_size, out_size, str(device), dtype)
+    cached = _POOL_WEIGHT_CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    # Build deterministically on CPU; the matrix is tiny and cached thereafter.
+    weights = torch.zeros(out_size, in_size, dtype=torch.float32)
+    for i in range(out_size):
+        start = math.floor(i * in_size / out_size)
+        end = math.ceil((i + 1) * in_size / out_size)
+        weights[i, start:end] = 1.0 / float(end - start)
+
+    weights = weights.to(device=device, dtype=dtype)
+    _POOL_WEIGHT_CACHE[key] = weights
+    return weights
+
+
 def spatial_pool(
     tokens: torch.Tensor,
     grid_thw: torch.Tensor,
@@ -110,11 +143,20 @@ def spatial_pool(
     merge = infer_merge_size(gh, gw, int(tokens.shape[0]))
     mh, mw = gh // merge, gw // merge
 
+    # [H,W,D], retaining the merged visual-token layout.
     x = tokens.reshape(mh, mw, tokens.shape[-1])
-    x = x.permute(2, 0, 1).unsqueeze(0)  # [1,D,H,W]
-    x = F.adaptive_avg_pool2d(x, (out_h, out_w))
-    x = x.squeeze(0).permute(1, 2, 0).reshape(out_h * out_w, -1)
-    return x
+
+    # Exact equivalent of adaptive_avg_pool2d for arbitrary H/W ratios, using
+    # only matmul/einsum operations supported by MPS.
+    h_weights = _adaptive_axis_weights(mh, out_h, x.device, x.dtype)
+    w_weights = _adaptive_axis_weights(mw, out_w, x.device, x.dtype)
+
+    # H pooling: [OH,H] x [H,W,D] -> [OH,W,D]
+    x = torch.einsum("ah,hwd->awd", h_weights, x)
+    # W pooling: [OH,W,D] x [OW,W] -> [OH,OW,D]
+    x = torch.einsum("awd,bw->abd", x, w_weights)
+
+    return x.reshape(out_h * out_w, -1)
 
 
 def main() -> None:
